@@ -1,0 +1,10 @@
+# Environments
+venv/
+__pycache__/
+
+# Secrets and Configs
+.env
+config.yaml
+
+# OS generated files
+.DS_Store

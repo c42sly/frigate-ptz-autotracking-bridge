@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  onvif-proxy:
+    build: .
+    container_name: onvif_proxy
+    restart: unless-stopped
+    network_mode: "host" # Uses host network to easily route to Frigate & Cameras
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro # Mounts config as Read-Only
