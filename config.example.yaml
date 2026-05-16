@@ -1,0 +1,26 @@
+# Frigate ONVIF Bridge - Configuration Template
+# Copy this file to 'config.yaml' and modify it for your environment.
+
+server:
+  host: "0.0.0.0"
+  port: 5000         # The port this proxy will use to mimic an ONVIF server
+
+camera:
+  ip: "192.168.1.X"  # Your camera's local IP address
+  username: "admin"
+  password: "YOUR_CAMERA_PASSWORD_HERE"
+
+# PTZ Command Mappings (Discovered via your clean-room network capture)
+ptz_settings:
+  commands:
+    stop: 0
+    up: 1
+    down: 2
+    left: 3
+    right: 4
+  speed:
+    default_pan: 7
+    default_tilt: 6
+  kinematics:
+    default_pulse_duration: 0.25  # Time in seconds for a standard relative move pulse
+    max_pulse_duration: 1.0       # Safety cutoff to prevent runaway motor loops
