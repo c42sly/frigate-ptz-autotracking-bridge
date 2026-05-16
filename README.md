@@ -44,4 +44,17 @@ Not all budget cameras use the exact CGI paths or command integers documented ab
 * Some brands use JSON payloads over WebSockets rather than URL parameters.
 * Some cameras invert the Y-axis commands or require different speed parameters (e.g., scale of 1-100 instead of 1-10).
 
+## 🛠️ Project Status: Proof of Concept
+
+This project started as a raw idea born out of necessity to solve a specific problem. It is **not a polished, commercial-grade product**, but rather a functional **Proof of Concept (PoC)**. 
+
+While it successfully drives autotracking on my specific network setup, the codebase is rough around the edges. It was built to prove a theory, and there are endless ways it could be optimized, refactored, or expanded to support broader hardware.
+
+### 🤝 Contributions & Ideas Welcome!
+If you think this is a cool concept, find a bug, or want to make the code prettier, please jump in! You are explicitly invited to:
+* **Fork the repository** and adapt it to your own weird hardware.
+* **Open an issue** to discuss new features or protocol discoveries.
+* **Submit Pull Requests** for performance improvements or cleaner logic.
+
+Let's make budget hardware do cool things together.
 To accommodate this, the codebase isolates the hardware execution loop. If your camera uses a different API, you can swap out the endpoint URLs and command IDs within the `_send_http_cmd` function to match your specific hardware's API structure.
