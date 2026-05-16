@@ -2,6 +2,19 @@
 
 If your camera lacks a standard web configuration page or hides its PTZ endpoint data, you can discover its control API using raw packet analysis. The endpoints for this project were mapped using an isolated network sandbox ("clean room") to eliminate background noise.
 
+(Method 1: The Physical Sandbox (Simplest & Most Reliable)
+This requires completely air-gapping your target devices from your main local network.
+
+The Hardware: You need a standalone, unmanaged switch (or an old spare router completely disconnected from any internet/WAN link), an Ethernet cable for the camera, and your workstation/server.
+
+The Configuration:
+
+Connect your computer's ethernet port and the camera directly into the isolated switch.
+
+Assign static IP addresses to both devices on a completely distinct subnet that doesn't match your house network (e.g., set your laptop to 192.168.99.10 and the camera to 192.168.99.20).
+
+Close all background applications on your workstation, turn off its Wi-Fi connection, and close system sync daemons to ensure your computer isn't polluting the logs.)
+
 
 
 ### Why a Clean Room Setup is Necessary
