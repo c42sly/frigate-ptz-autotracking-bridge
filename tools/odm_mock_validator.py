@@ -228,7 +228,7 @@ class MotionEngine(threading.Thread):
         self.work_queue.put((move_type, x, y, z))
 
     def force_stop(self):
-        while not self.work_queue.put:
+        while not self.work_queue.empty():
             try:
                 self.work_queue.get_nowait()
                 self.work_queue.task_done()

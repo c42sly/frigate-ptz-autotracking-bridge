@@ -1,0 +1,12 @@
+# Keep secrets and local state out of the image build context.
+# config.yaml and .env are provided at runtime (volume mount / env_file).
+config.yaml
+.env
+
+# Python / virtualenv / VCS cruft
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore

@@ -25,8 +25,17 @@ for prefix, uri in NAMESPACES.items():
 
 CMDS = {"stop": 0, "up": 1, "down": 2, "left": 3, "right": 4}
 
+
+def _to_float(value, default=0.0):
+    """Coerce an ONVIF attribute to float, tolerating missing/garbage values."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ==============================================================================
-#  THE MOTION ENGINE 
+#  THE MOTION ENGINE
 # ==============================================================================
 class MotionEngine(threading.Thread):
     def __init__(self, name, config, password):
@@ -38,8 +47,9 @@ class MotionEngine(threading.Thread):
         self.session = requests.Session()
         self.session.auth = (config['user'], password)
         
-        self.base_url = f"http://{self.ip}/form/setPTZCfg"
-        self.preset_url = f"http://{self.ip}/form/presetSet"
+        self.http_port = config.get('http_port', 80)
+        self.base_url = f"http://{self.ip}:{self.http_port}/form/setPTZCfg"
+        self.preset_url = f"http://{self.ip}:{self.http_port}/form/presetSet"
         
         self.work_queue = queue.Queue()
         self.is_moving = False
@@ -68,6 +78,16 @@ class MotionEngine(threading.Thread):
                         self.is_moving = False
 
     def dispatch_move(self, move_type, x, y):
+        # Coalesce: a newer relative target supersedes stale queued moves, so the
+        # engine always acts on the freshest vector instead of lagging behind a
+        # backlog of pulses when a subject moves quickly.
+        if move_type == "RELATIVE":
+            while not self.work_queue.empty():
+                try:
+                    self.work_queue.get_nowait()
+                    self.work_queue.task_done()
+                except queue.Empty:
+                    break
         self.work_queue.put((move_type, x, y))
 
     def force_stop(self):
@@ -201,16 +221,16 @@ def create_proxy_app(engine):
         elif root.find('.//tptz:RelativeMove', NAMESPACES) is not None:
             pan_tilt_elem = root.find('.//tt:PanTilt', NAMESPACES)
             if pan_tilt_elem is not None:
-                x = float(pan_tilt_elem.get('x', 0.0))
-                y = float(pan_tilt_elem.get('y', 0.0))
+                x = _to_float(pan_tilt_elem.get('x'))
+                y = _to_float(pan_tilt_elem.get('y'))
                 engine.dispatch_move("RELATIVE", x, y)
             return Response("""<?xml version="1.0" encoding="utf-8"?><SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><SOAP-ENV:Body><tptz:RelativeMoveResponse/></SOAP-ENV:Body></SOAP-ENV:Envelope>""", mimetype='application/soap+xml')
 
         elif root.find('.//tptz:ContinuousMove', NAMESPACES) is not None:
             pan_tilt_elem = root.find('.//tt:PanTilt', NAMESPACES)
             if pan_tilt_elem is not None:
-                x = float(pan_tilt_elem.get('x', 0.0))
-                y = float(pan_tilt_elem.get('y', 0.0))
+                x = _to_float(pan_tilt_elem.get('x'))
+                y = _to_float(pan_tilt_elem.get('y'))
                 engine.dispatch_move("CONTINUOUS", x, y)
             return Response("""<?xml version="1.0" encoding="utf-8"?><SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><SOAP-ENV:Body><tptz:ContinuousMoveResponse/></SOAP-ENV:Body></SOAP-ENV:Envelope>""", mimetype='application/soap+xml')
 
@@ -247,17 +267,32 @@ class ProxyServerThread(threading.Thread):
         self.server.serve_forever()
 
 if __name__ == '__main__':
+    # Force UTF-8 stdout/stderr so the emoji log lines cannot raise
+    # UnicodeEncodeError on a non-UTF-8 locale -- which would otherwise kill a
+    # proxy thread before it ever reaches serve_forever().
+    import sys
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     with open('config.yaml', 'r') as f:
         config_data = yaml.safe_load(f)
 
     servers = []
     for cam_name, cam_cfg in config_data.get('cameras', {}).items():
-        password = os.environ.get(cam_cfg.get('password_env', ''), 'admin') 
+        env_name = cam_cfg.get('password_env')
+        if not env_name or env_name not in os.environ:
+            print(f"[{cam_name}] WARNING: password_env '{env_name}' is not set in the "
+                  f"environment -- skipping this camera. Define it in your .env / environment.")
+            continue
+        password = os.environ[env_name]
         port = cam_cfg.get('port', 8080)
-        
+
         engine = MotionEngine(cam_name, cam_cfg, password)
         engine.start()
-        
+
         server_thread = ProxyServerThread(engine, port)
         server_thread.start()
         servers.append(server_thread)

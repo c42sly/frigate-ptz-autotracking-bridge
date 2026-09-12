@@ -1,11 +1,12 @@
+import os
 import time
 import requests
 
-# --- CONFIGURATION ---
-CAMERA_IP = "192.168.1.118"
-USERNAME = "admin"
-PASSWORD = "fordsyke1944"
-# ---------------------
+# --- CONFIGURATION (override via environment variables) ---
+CAMERA_IP = os.environ.get("CAMERA_IP", "192.168.1.X")
+USERNAME = os.environ.get("CAMERA_USER", "admin")
+PASSWORD = os.environ.get("CAMERA_PASSWORD", "your_password_here")
+# ----------------------------------------------------------
 
 session = requests.Session()
 session.auth = (USERNAME, PASSWORD)
@@ -37,7 +38,7 @@ def run_tuning():
         print(f"\n🎬 Firing RIGHT pulse for exactly {test_duration} seconds...")
         
         # 1. Start moving right (Command 4)
-        send_cmd(1)
+        send_cmd(4)
         
         # 2. Hold the exact duration on the system clock
         time.sleep(test_duration)
