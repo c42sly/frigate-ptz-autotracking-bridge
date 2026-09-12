@@ -1,26 +1,42 @@
 # Frigate ONVIF Bridge - Configuration Template
-# Copy this file to 'config.yaml' and modify it for your environment.
+# Copy this file to 'config.yaml' and edit it for your environment.
+#
+# Every entry under `cameras:` starts an independent ONVIF proxy on its own
+# `port`. Point Frigate's `onvif:` block for that camera at the bridge's host
+# and that port. Passwords are read from environment variables (see .env) named
+# by `password_env`.
+#
+# Two output drivers are available:
+#   generic_cgi  (default) Xiongmai/XM-style HTTP CGI: /form/setPTZCfg?command=<id>
+#   onvif                  Re-emit native ONVIF ContinuousMove/Stop to a camera
+#                          that HAS ONVIF PTZ but lacks the FOV-relative space
+#                          Frigate autotracking requires (e.g. many HiSilicon
+#                          OEM domes that only expose Generic/Velocity spaces).
 
-server:
-  host: "0.0.0.0"
-  port: 5000         # The port this proxy will use to mimic an ONVIF server
+cameras:
+  # ---- Example A: budget XM / Xiongmai camera driven over HTTP CGI ----------
+  driveway:
+    driver: generic_cgi           # default; may be omitted
+    ip: "192.168.1.50"
+    user: "admin"
+    password_env: "CAM_DRIVEWAY_PASS"  # password taken from this env var (.env)
+    port: 8081                    # ONVIF port THIS proxy listens on -> Frigate
+    pan_velocity: 7               # camera CGI speed units
+    tilt_velocity: 6
+    cooldown: 0.35                # min seconds between relative pulses
+    scale_multiplier: 0.7         # vector magnitude -> pulse seconds
 
-camera:
-  ip: "192.168.1.X"  # Your camera's local IP address
-  username: "admin"
-  password: "YOUR_CAMERA_PASSWORD_HERE"
-
-# PTZ Command Mappings (Discovered via your clean-room network capture)
-ptz_settings:
-  commands:
-    stop: 0
-    up: 1
-    down: 2
-    left: 3
-    right: 4
-  speed:
-    default_pan: 7
-    default_tilt: 6
-  kinematics:
-    default_pulse_duration: 0.25  # Time in seconds for a standard relative move pulse
-    max_pulse_duration: 1.0       # Safety cutoff to prevent runaway motor loops
+  # ---- Example B: camera WITH ONVIF PTZ but no TranslationSpaceFov ----------
+  street:
+    driver: onvif
+    ip: "192.168.1.60"
+    user: "admin"
+    password_env: "CAM_STREET_PASS"
+    port: 8082                    # ONVIF port THIS proxy listens on -> Frigate
+    onvif_port: 8999              # the camera's OWN ONVIF service port
+    profile_token: "MainStream"   # from the camera's GetProfiles (e.g. Profile_1)
+    onvif_pan_velocity: 0.5       # ONVIF ContinuousMove velocity, range -1.0..1.0
+    onvif_tilt_velocity: 0.5
+    home_preset_token: "1"        # firmware preset for return-to-home (GotoPreset)
+    cooldown: 0.35
+    scale_multiplier: 0.7

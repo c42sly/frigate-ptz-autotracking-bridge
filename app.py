@@ -6,6 +6,10 @@ import requests
 import logging
 import yaml
 import xml.etree.ElementTree as ET
+import hashlib
+import secrets
+import base64
+from datetime import datetime, timezone
 from flask import Flask, request, Response
 from werkzeug.serving import make_server
 
@@ -61,10 +65,23 @@ class MotionEngine(threading.Thread):
         self.cooldown_window = config.get('cooldown', 0.35)
         self.scale_multiplier = config.get('scale_multiplier', 0.7)
 
-        self.virtual_pan = 0.0             
-        self.virtual_tilt = 0.0            
-        self.encoder_speed_factor = 0.15   
-        self.last_move_completion = 0.0    
+        self.virtual_pan = 0.0
+        self.virtual_tilt = 0.0
+        self.encoder_speed_factor = 0.15
+        self.last_move_completion = 0.0
+
+        # --- ONVIF driver settings (used only when driver == "onvif") ---
+        # For cameras that DO expose ONVIF PTZ but lack the FOV-relative
+        # translation space Frigate autotracking requires. Instead of CGI, the
+        # pulse engine re-emits native ONVIF ContinuousMove/Stop calls.
+        self.onvif_user = config['user']
+        self.onvif_pass = password
+        self.onvif_port = config.get('onvif_port', 8999)
+        self.profile_token = config.get('profile_token', 'Profile_1')
+        self.onvif_pan_velocity = config.get('onvif_pan_velocity', 0.5)
+        self.onvif_tilt_velocity = config.get('onvif_tilt_velocity', 0.5)
+        self.home_preset_token = str(config.get('home_preset_token', '1'))
+        self.onvif_session = requests.Session()
 
     def run(self):
         while True:
@@ -100,7 +117,7 @@ class MotionEngine(threading.Thread):
         with self.lock:
             self.is_moving = False
             self.move_end_time = 0.0
-        self._send_http_cmd("stop")
+        self._send_cmd("stop")
         print(f"[{self.name}] 🛑 Emergency Stop Executed")
 
     def get_engine_status(self):
@@ -151,34 +168,97 @@ class MotionEngine(threading.Thread):
                 with self.lock:
                     self.is_moving = True
                     self.move_end_time = time.time() + 3600
-                self._send_http_cmd(direction)
+                self._send_cmd(direction)
 
     def _execute_hardware_pulse(self, direction, duration):
         with self.lock:
             self.is_moving = True
             self.move_end_time = time.time() + duration
-        self._send_http_cmd(direction)
+        self._send_cmd(direction)
         time.sleep(duration)
-        self._send_http_cmd("stop")
+        self._send_cmd("stop")
         with self.lock:
             self.is_moving = False
 
-    def _send_http_cmd(self, direction):
-        if self.driver == "generic_cgi":
-            cmd_id = CMDS.get(direction, 0)
-            try:
-                self.session.get(self.base_url, params={
-                    "command": cmd_id, 
-                    "panSpeed": self.pan_velocity, 
-                    "tiltSpeed": self.tilt_velocity
-                }, timeout=0.5)
-            except Exception as e:
-                print(f"[{self.name}] ⚠ HTTP Command Failed: {e}")
+    def _send_cmd(self, direction):
+        """Single hardware-output chokepoint. Dispatches to the configured driver."""
+        if self.driver == "onvif":
+            self._send_onvif_cmd(direction)
+        else:
+            self._send_generic_cgi_cmd(direction)
+
+    def _send_generic_cgi_cmd(self, direction):
+        cmd_id = CMDS.get(direction, 0)
+        try:
+            self.session.get(self.base_url, params={
+                "command": cmd_id,
+                "panSpeed": self.pan_velocity,
+                "tiltSpeed": self.tilt_velocity
+            }, timeout=0.5)
+        except Exception as e:
+            print(f"[{self.name}] ⚠ HTTP Command Failed: {e}")
+
+    # ---- ONVIF driver: re-emit native ONVIF ContinuousMove / Stop -----------
+    def _ws_security(self):
+        """Build a WS-Security UsernameToken (PasswordDigest) header block."""
+        nonce = secrets.token_bytes(16)
+        created = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        digest = base64.b64encode(
+            hashlib.sha1(nonce + created.encode('utf-8') + self.onvif_pass.encode('utf-8')).digest()
+        ).decode('ascii')
+        nonce_b64 = base64.b64encode(nonce).decode('ascii')
+        return (
+            '<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" '
+            'xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'
+            '<wsse:UsernameToken>'
+            f'<wsse:Username>{self.onvif_user}</wsse:Username>'
+            '<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">'
+            f'{digest}</wsse:Password>'
+            '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">'
+            f'{nonce_b64}</wsse:Nonce>'
+            f'<wsu:Created>{created}</wsu:Created>'
+            '</wsse:UsernameToken></wsse:Security>'
+        )
+
+    def _onvif_post(self, action, body):
+        envelope = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+            f'<s:Header>{self._ws_security()}</s:Header>'
+            f'<s:Body>{body}</s:Body></s:Envelope>'
+        )
+        url = f"http://{self.ip}:{self.onvif_port}/onvif/ptz_service"
+        try:
+            self.onvif_session.post(
+                url, data=envelope.encode('utf-8'),
+                headers={"Content-Type": f'application/soap+xml; charset=utf-8; action="{action}"'},
+                timeout=1.0)
+        except Exception as e:
+            print(f"[{self.name}] ⚠ ONVIF Command Failed: {e}")
+
+    def _send_onvif_cmd(self, direction):
+        PTZ = "http://www.onvif.org/ver20/ptz/wsdl"
+        SC = "http://www.onvif.org/ver10/schema"
+        if direction == "stop":
+            body = (f'<Stop xmlns="{PTZ}"><ProfileToken>{self.profile_token}</ProfileToken>'
+                    '<PanTilt>true</PanTilt><Zoom>true</Zoom></Stop>')
+            self._onvif_post(f"{PTZ}/Stop", body)
+            return
+        vx = {"left": -self.onvif_pan_velocity, "right": self.onvif_pan_velocity}.get(direction, 0.0)
+        vy = {"up": self.onvif_tilt_velocity, "down": -self.onvif_tilt_velocity}.get(direction, 0.0)
+        body = (f'<ContinuousMove xmlns="{PTZ}"><ProfileToken>{self.profile_token}</ProfileToken>'
+                f'<Velocity><PanTilt x="{vx}" y="{vy}" xmlns="{SC}"/></Velocity></ContinuousMove>')
+        self._onvif_post(f"{PTZ}/ContinuousMove", body)
 
     def reset_encoder_to_home(self):
         self.virtual_pan = 0.0
         self.virtual_tilt = 0.0
-        if self.driver == "generic_cgi":
+        if self.driver == "onvif":
+            PTZ = "http://www.onvif.org/ver20/ptz/wsdl"
+            body = (f'<GotoPreset xmlns="{PTZ}"><ProfileToken>{self.profile_token}</ProfileToken>'
+                    f'<PresetToken>{self.home_preset_token}</PresetToken></GotoPreset>')
+            self._onvif_post(f"{PTZ}/GotoPreset", body)
+        else:
             try:
                 self.session.get(self.preset_url, params={"flag": 4, "existFlag": 1, "presetNum": 0}, timeout=1)
             except Exception as e:

@@ -44,6 +44,18 @@ Not all budget cameras use the exact CGI paths or command integers documented ab
 * Some brands use JSON payloads over WebSockets rather than URL parameters.
 * Some cameras invert the Y-axis commands or require different speed parameters (e.g., scale of 1-100 instead of 1-10).
 
+To keep this manageable, hardware output is selected per-camera with a `driver` key, and all output flows through a single `_send_cmd` chokepoint:
+
+| `driver` | Output to camera | Use when |
+| --- | --- | --- |
+| `generic_cgi` (default) | `GET /form/setPTZCfg?command=<id>` | Xiongmai/XM CGI cameras |
+| `onvif` | native ONVIF `ContinuousMove` / `Stop` (WS-Security digest) | camera **has** ONVIF PTZ but reports no `TranslationSpaceFov`, so Frigate autotracking refuses to drive it directly |
+
+### The `onvif` driver
+Plenty of HiSilicon OEM domes speak ONVIF and accept `ContinuousMove`/`Stop`, yet only advertise Generic/Velocity PTZ spaces — never the `RelativePanTiltTranslationSpace` + `TranslationSpaceFov` that Frigate's autotracker requires. The bridge fakes that FOV-relative interface toward Frigate and drives the real camera with the same pulse-and-stop engine, except each pulse is a native ONVIF `ContinuousMove` followed by `Stop`. Return-to-home issues an ONVIF `GotoPreset` to `home_preset_token` (create that preset in the camera firmware first).
+
+Relevant keys (see `config.example.yaml`): `onvif_port`, `profile_token`, `onvif_pan_velocity`, `onvif_tilt_velocity`, `home_preset_token`.
+
 ## 🛠️ Project Status: Proof of Concept
 
 This project started as a raw idea born out of necessity to solve a specific problem. It is **not a polished, commercial-grade product**, but rather a functional **Proof of Concept (PoC)**. 

@@ -1,5 +1,6 @@
 # Environments
 venv/
+.venv/
 __pycache__/
 
 # Secrets and Configs
