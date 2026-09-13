@@ -1,0 +1,30 @@
+_autotrack_move_ptz()
+       │
+       ▼
+_enqueue_move()
+       │
+       ▼
+_process_move_queue()
+       │
+       ▼
+_move_relative()
+       │
+       ├── motor_stopped.clear()
+       ├── start_time = current frame time
+       └── RelativeMove()
+                 │
+                 ▼
+              CAMERA
+                 │
+                 ▼
+          get_camera_status()
+                 │
+          ┌──────┴──────┐
+          │             │
+        MOVING         IDLE
+          │             │
+       clear()        set()
+                        │
+                        ▼
+              _process_move_queue()
+              can continue to next move
